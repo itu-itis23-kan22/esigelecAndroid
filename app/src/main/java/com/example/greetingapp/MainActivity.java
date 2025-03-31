@@ -1,9 +1,12 @@
 package com.example.greetingapp;
 
 import android.Manifest;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
+import android.os.Build;
 import android.os.Bundle;
 
 import androidx.activity.EdgeToEdge;
@@ -27,7 +30,11 @@ import android.widget.Toast;
 import androidx.core.content.FileProvider;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -44,13 +51,53 @@ public class MainActivity extends AppCompatActivity {
     private String currentPhotoPath;
     static final int REQUEST_IMAGE_CAPTURE = 1;
     private static final int REQUEST_CAMERA_PERMISSION = 2;
+    private static final int REQUEST_STORAGE_PERMISSION = 3;
 
     private void galleryAddPic() {
-        Intent mediaScanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
-        File f = new File(currentPhotoPath);
-        Uri contentUri = Uri.fromFile(f);
-        mediaScanIntent.setData(contentUri);
-        this.sendBroadcast(mediaScanIntent);
+        try {
+            File f = new File(currentPhotoPath);
+            if (!f.exists()) {
+                Toast.makeText(this, "File not found: " + currentPhotoPath, Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            // Use MediaStore API for Android 10 (API 29) and above
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContentResolver resolver = getContentResolver();
+                ContentValues contentValues = new ContentValues();
+                contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, f.getName());
+                contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+                contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES);
+                Uri imageUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues);
+                
+                if (imageUri != null) {
+                    try (OutputStream outputStream = resolver.openOutputStream(imageUri);
+                         InputStream inputStream = new FileInputStream(f)) {
+                        
+                        if (outputStream != null) {
+                            byte[] buffer = new byte[1024];
+                            int bytesRead;
+                            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                                outputStream.write(buffer, 0, bytesRead);
+                            }
+                        }
+                    }
+                    Toast.makeText(this, "Photo added to gallery: " + imageUri, Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, "Could not create gallery URI", Toast.LENGTH_SHORT).show();
+                }
+            } else {
+                // For older Android versions (API 28 and below)
+                Intent mediaScanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+                Uri contentUri = Uri.fromFile(f);
+                mediaScanIntent.setData(contentUri);
+                sendBroadcast(mediaScanIntent);
+                Toast.makeText(this, "Photo added to gallery: " + contentUri, Toast.LENGTH_SHORT).show();
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "Error adding to gallery: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            e.printStackTrace();
+        }
     }
 
 
@@ -58,9 +105,17 @@ public class MainActivity extends AppCompatActivity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_IMAGE_CAPTURE && resultCode == RESULT_OK) {
-            // Galeriye ekle
-            galleryAddPic();
-            Toast.makeText(this, "Fotoğraf çekildi ve galeriye kaydedildi", Toast.LENGTH_SHORT).show();
+            // Add to gallery
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q || 
+                ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) 
+                == PackageManager.PERMISSION_GRANTED) {
+                galleryAddPic();
+            } else {
+                // Request storage permission
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                        REQUEST_STORAGE_PERMISSION);
+            }
         }
     }
 
@@ -103,7 +158,7 @@ public class MainActivity extends AppCompatActivity {
                 photoFile = createImageFile();
             } catch (IOException ex) {
                 // Error occurred while creating the File
-                Toast.makeText(this, "Dosya oluşturulurken hata: " + ex.getMessage(), Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Error creating file: " + ex.getMessage(), Toast.LENGTH_SHORT).show();
                 return;
             }
             
@@ -116,11 +171,11 @@ public class MainActivity extends AppCompatActivity {
                     takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI);
                     startActivityForResult(takePictureIntent, REQUEST_IMAGE_CAPTURE);
                 } catch (Exception e) {
-                    Toast.makeText(this, "Kamera açılırken hata: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Error opening camera: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                 }
             }
         } else {
-            Toast.makeText(this, "Kamera uygulaması bulunamadı", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "No camera application found", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -133,7 +188,14 @@ public class MainActivity extends AppCompatActivity {
                 dispatchTakePictureIntent();
             } else {
                 // Permission denied
-                Toast.makeText(this, "Kamera izni verilmedi", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Camera permission denied", Toast.LENGTH_SHORT).show();
+            }
+        } else if (requestCode == REQUEST_STORAGE_PERMISSION) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                // Storage permission granted, perform gallery addition
+                galleryAddPic();
+            } else {
+                Toast.makeText(this, "Cannot add photo to gallery without storage permission", Toast.LENGTH_SHORT).show();
             }
         }
     }
@@ -144,14 +206,14 @@ public class MainActivity extends AppCompatActivity {
         EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
 
-        // View'leri bağla
+        // Bind views
         takePictureButton = findViewById(R.id.button);
         nameEditText = findViewById(R.id.nameEditText);
         greetButton = findViewById(R.id.greetButton);
         greetingTextView = findViewById(R.id.greetingTextView);
         mainLayout = findViewById(R.id.main);
 
-        // Butonlara listener ekle
+        // Add button listeners
         takePictureButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
