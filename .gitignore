@@ -23,3 +23,8 @@ local.properties
 *.properties
 *.properties
 *.properties
+.gradle/8.11.1/executionHistory/executionHistory.bin
+.gradle/8.11.1/fileHashes/resourceHashesCache.bin
+.gradle/buildOutputCleanup/outputFiles.bin
+.gradle/file-system.probe
+.idea/studiobot.xml
